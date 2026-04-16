@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>BYU Wordle Clone – English / Español</title>
+  <link rel="stylesheet" href="css/wordlestyles.css" type="text/css">
+</head>
+<body>
+  <div class="game-container">
+    <div class="game-header">
+      <div class="title">BYU Wordle</div>
+      <div class="byu-tag">Cougar Edition</div>
+    </div>
+    <div class="subtitle">
+      Guess the <span id="lang-label">English</span> 5-letter word in 6 tries.
+    </div>
+
+    <div class="controls">
+      <!-- Language toggle button: switches between English and Spanish word lists -->
+      <button class="lang-toggle" id="lang-toggle">
+        🌐 <span>EN</span> / ES
+      </button>
+      <button class="reset-btn" id="giveup-btn">
+        Give Up
+      </button>
+      <button class="reset-btn" id="playagain-btn" style="display:none;">
+        Play Again
+      </button>
+
+    </div>
+
+    <!-- Status text: win/lose messages, errors, etc. -->
+    <div class="status" id="status"></div>
+
+    <!-- 6x5 grid for guesses -->
+    <div class="grid" id="grid"></div>
+
+    <!-- On-screen keyboard -->
+    <div class="keyboard" id="keyboard"></div>
+
+    <div class="footer-note">
+      Themed for <span>BYU</span> • Toggle between English and Spanish words.
+    </div>
+  </div>
+
+  <script>
+    // ==============================
+    // CONFIGURATION & WORD LISTS
+    // ==============================
+
+    // 5-letter English words (BYU-ish / simple list)
+    const WORDS_EN = [
+      "COUGS", "YOUNG", "HONOR", "FAITH",
+      "CLASS", "CAMPY", "STUDY", "SMILE", "PROVO",
+      "BOOKS", "LEARN", "SCORE", "PRIDE", "BLUEY", "MOUNT", "COSMO"
+    ];
+
+    // 5-letter Spanish words (no accents to keep input simple)
+    const WORDS_ES = [
+      "PERRO", "GATOS", "CASAS", "LIBRO", "AMIGO",
+      "FELIZ", "NIEVE", "PLAYA", "RISAS", "LUCES",
+      "NOCHE", "SOLAR", "CAMPO", "RUIDO", "SALUD", "GRACIA",
+      "MUNDO", "MONTE"
+    ];
+
+    // Keyboard layout (QWERTY)
+    const KEY_ROWS = [
+      ["Q","W","E","R","T","Y","U","I","O","P"],
+      ["A","S","D","F","G","H","J","K","L"],
+      ["ENTER","Z","X","C","V","B","N","M","DEL"]
+    ];
+
+    const MAX_ROWS = 6;
+    const WORD_LENGTH = 5;
+
+    // ==============================
+    // STATE VARIABLES
+    // ==============================
+    let currentRow = 0;
+    let currentCol = 0;
+    let currentGuess = "";
+    let targetWord = "";
+    let isGameOver = false;
+    let currentLang = "EN"; // "EN" or "ES"
+
+    const gridEl = document.getElementById("grid");
+    const keyboardEl = document.getElementById("keyboard");
+    const statusEl = document.getElementById("status");
+    const langToggleBtn = document.getElementById("lang-toggle");
+    const langLabel = document.getElementById("lang-label");
+    const resetBtn = document.getElementById("reset-btn");
+
+    // ==============================
+    // INITIALIZATION
+    // ==============================
+
+    // Build the empty 6x5 grid
+    function buildGrid() {
+      gridEl.innerHTML = "";
+      for (let r = 0; r < MAX_ROWS; r++) {
+        const row = document.createElement("div");
+        row.classList.add("row");
+        for (let c = 0; c < WORD_LENGTH; c++) {
+          const tile = document.createElement("div");
+          tile.classList.add("tile");
+          tile.dataset.row = r;
+          tile.dataset.col = c;
+
+          const inner = document.createElement("div");
+          inner.classList.add("tile-inner");
+          tile.appendChild(inner);
+
+          row.appendChild(tile);
+        }
+        gridEl.appendChild(row);
+      }
+    }
+
+    // Build the on-screen keyboard
+    function buildKeyboard() {
+      keyboardEl.innerHTML = "";
+      KEY_ROWS.forEach(rowKeys => {
+        const row = document.createElement("div");
+        row.classList.add("keyboard-row");
+        rowKeys.forEach(keyVal => {
+          const key = document.createElement("button");
+          key.classList.add("key");
+          key.textContent = keyVal === "ENTER" ? "Enter" : (keyVal === "DEL" ? "Del" : keyVal);
+          if (keyVal === "ENTER" || keyVal === "DEL") {
+            key.classList.add("wide");
+          }
+          key.dataset.key = keyVal;
+          key.addEventListener("click", () => handleKeyInput(keyVal));
+          row.appendChild(key);
+        });
+        keyboardEl.appendChild(row);
+      });
+    }
+
+    // Pick a random word based on current language
+    function pickRandomWord() {
+      const list = currentLang === "EN" ? WORDS_EN : WORDS_ES;
+      const index = Math.floor(Math.random() * list.length);
+      return list[index].toUpperCase();
+    }
+
+    // Start or restart the game
+    function startGame() {
+  currentRow = 0;
+  currentCol = 0;
+  currentGuess = "";
+  isGameOver = false;   // <-- THIS MUST BE HERE
+  statusEl.textContent = "";
+  targetWord = pickRandomWord();
+  buildGrid();
+  resetKeyboardColors();
+}
+
+
+    // Reset keyboard key colors
+    function resetKeyboardColors() {
+      const keys = keyboardEl.querySelectorAll(".key");
+      keys.forEach(k => {
+        k.classList.remove("correct", "present", "absent");
+      });
+    }
+
+    // ==============================
+    // INPUT HANDLING
+    // ==============================
+
+    // Handle physical keyboard input
+    document.addEventListener("keydown", (e) => {
+      if (isGameOver) return;
+
+      const key = e.key;
+      if (key === "Enter") {
+        handleKeyInput("ENTER");
+      } else if (key === "Backspace") {
+        handleKeyInput("DEL");
+      } else if (/^[a-zA-Z]$/.test(key)) {
+        handleKeyInput(key.toUpperCase());
+      }
+    });
+
+    // Handle on-screen keyboard input
+    function handleKeyInput(keyVal) {
+      if (isGameOver) return;
+
+      if (keyVal === "ENTER") {
+        submitGuess();
+      } else if (keyVal === "DEL") {
+        deleteLetter();
+      } else if (/^[A-Z]$/.test(keyVal)) {
+        addLetter(keyVal);
+      }
+    }
+
+    // Add a letter to the current guess
+    function addLetter(letter) {
+      if (currentCol >= WORD_LENGTH || currentRow >= MAX_ROWS) return;
+      const tile = getTile(currentRow, currentCol);
+      tile.classList.add("filled");
+      tile.querySelector(".tile-inner").textContent = letter;
+      currentGuess += letter;
+      currentCol++;
+    }
+
+    // Delete the last letter
+    function deleteLetter() {
+      if (currentCol === 0 || currentRow >= MAX_ROWS) return;
+      currentCol--;
+      const tile = getTile(currentRow, currentCol);
+      tile.classList.remove("filled");
+      tile.querySelector(".tile-inner").textContent = "";
+      currentGuess = currentGuess.slice(0, -1);
+    }
+
+    // Get tile element by row/col
+    function getTile(row, col) {
+      return gridEl.querySelector(`.tile[data-row="${row}"][data-col="${col}"]`);
+    }
+
+    // ==============================
+    // GUESS EVALUATION
+    // ==============================
+
+    function submitGuess() {
+      if (currentGuess.length !== WORD_LENGTH) {
+        statusEl.textContent = currentLang === "EN"
+          ? "Not enough letters."
+          : "Faltan letras.";
+        return;
+      }
+
+      // Optional: check if guess is in word list (simple validation)
+      const list = currentLang === "EN" ? WORDS_EN : WORDS_ES;
+      if (!list.includes(currentGuess)) {
+        statusEl.textContent = currentLang === "EN"
+          ? "Word not in list."
+          : "La palabra no está en la lista.";
+        return;
+      }
+
+      // Evaluate guess vs targetWord
+      const result = evaluateGuess(currentGuess, targetWord);
+      colorRow(result);
+      updateKeyboardColors(result);
+
+      if (currentGuess === targetWord) {
+        isGameOver = true;
+        statusEl.textContent = currentLang === "EN"
+          ? "You got it! 🎉"
+          : "¡Lo lograste! 🎉";
+        document.getElementById("playagain-btn").style.display = "inline-block";
+  return;
+      }
+
+      currentRow++;
+      currentCol = 0;
+      currentGuess = "";
+
+      if (currentRow === MAX_ROWS) {
+        isGameOver = true;
+        statusEl.textContent = currentLang === "EN"
+          ? `Out of guesses. The word was ${targetWord}.`
+          : `Sin intentos. La palabra era ${targetWord}.`;
+      } else {
+        statusEl.textContent = "";
+      }
+    }
+
+    // Evaluate guess: returns array of { letter, state }
+    // state: "correct", "present", "absent"
+    function evaluateGuess(guess, target) {
+      const result = [];
+      const targetArr = target.split("");
+      const guessArr = guess.split("");
+
+      // First pass: mark correct positions
+      const used = Array(WORD_LENGTH).fill(false);
+      for (let i = 0; i < WORD_LENGTH; i++) {
+        if (guessArr[i] === targetArr[i]) {
+          result[i] = { letter: guessArr[i], state: "correct" };
+          used[i] = true;
+        }
+      }
+
+      // Second pass: mark present/absent
+      for (let i = 0; i < WORD_LENGTH; i++) {
+        if (result[i]) continue; // already correct
+        const letter = guessArr[i];
+        let foundIndex = -1;
+        for (let j = 0; j < WORD_LENGTH; j++) {
+          if (!used[j] && targetArr[j] === letter) {
+            foundIndex = j;
+            break;
+          }
+        }
+        if (foundIndex !== -1) {
+          result[i] = { letter, state: "present" };
+          used[foundIndex] = true;
+        } else {
+          result[i] = { letter, state: "absent" };
+        }
+      }
+
+      return result;
+    }
+
+    // Color the tiles in the current row based on result
+    function colorRow(result) {
+      for (let c = 0; c < WORD_LENGTH; c++) {
+        const tile = getTile(currentRow, c);
+        tile.classList.remove("correct", "present", "absent");
+        tile.classList.add(result[c].state);
+      }
+    }
+
+    // Update keyboard key colors (never downgrade a key)
+    function updateKeyboardColors(result) {
+      result.forEach(({ letter, state }) => {
+        const key = keyboardEl.querySelector(`.key[data-key="${letter}"]`);
+        if (!key) return;
+
+        if (state === "correct") {
+          key.classList.remove("present", "absent");
+          key.classList.add("correct");
+        } else if (state === "present") {
+          if (!key.classList.contains("correct")) {
+            key.classList.remove("absent");
+            key.classList.add("present");
+          }
+        } else if (state === "absent") {
+          if (!key.classList.contains("correct") && !key.classList.contains("present")) {
+            key.classList.add("absent");
+          }
+        }
+      });
+    }
+
+    // ==============================
+    // LANGUAGE TOGGLE & RESET
+    // ==============================
+
+    // Toggle between English and Spanish
+    langToggleBtn.addEventListener("click", () => {
+      currentLang = currentLang === "EN" ? "ES" : "EN";
+      langLabel.textContent = currentLang === "EN" ? "English" : "Spanish";
+      langToggleBtn.querySelector("span").textContent = currentLang;
+      statusEl.textContent = currentLang === "EN"
+        ? "Language: English. New word selected."
+        : "Idioma: Español. Nueva palabra seleccionada.";
+      startGame();
+    });
+
+    // Give Up button: reveal the word and end the game
+const giveUpBtn = document.getElementById("giveup-btn");
+giveUpBtn.addEventListener("click", () => {
+  if (isGameOver) return;
+
+  isGameOver = true;
+  statusEl.textContent = currentLang === "EN"
+    ? `You gave up! The word was ${targetWord}.`
+    : `Te rendiste. La palabra era ${targetWord}.`;
+    document.getElementById("playagain-btn").style.display = "inline-block";
+});
+
+const playAgainBtn = document.getElementById("playagain-btn");
+playAgainBtn.addEventListener("click", () => {
+  startGame();
+  playAgainBtn.style.display = "none"; // hide again until next game over
+});
+
+    // ==============================
+    // BOOTSTRAP
+    // ==============================
+    buildGrid();
+    buildKeyboard();
+    startGame();
+
+    // ==============================
+    // HOW TO CUSTOMIZE (FOR YOU)
+    // ==============================
+    // - Add/remove words in WORDS_EN and WORDS_ES.
+    // - Change BYU colors in the <style> section (e.g., background, tile colors).
+    // - Adjust messages in English/Spanish in statusEl.textContent assignments.
+    // - Add a "hint" button in .controls and write a function that reveals a letter.
+    // - Log targetWord to console for debugging while you test.
+  </script>
+</body>
+</html>
